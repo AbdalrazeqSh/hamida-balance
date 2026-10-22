@@ -335,7 +335,7 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     }, 0);
   }
   function fmtNet(n){
-    return (n<0?'عليه ':'له ') + fmt(Math.abs(n)) + ' ₪';
+    return (n<0?'−':'+') + fmt(Math.abs(n)) + ' ₪';
   }
 
   function entryRowHtml(e, today){
@@ -354,8 +354,8 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     '</div>';
   }
 
-  // يبني العرض متداخلًا: شهر يحوي أسابيع (جمعة-خميس)، كل وحدة قابلة للطي/الفتح مع إجمالي صغير فوقها.
-  // الشهر والأسبوع الحاليين مفتوحين افتراضيًا، وما عداهما مطوي، إلا لو المستخدم فتحه يدويًا بهذه الزيارة.
+  // يبني العرض مجمّعًا بالشهر فقط، كل شهر قابل للطي/الفتح مع إجمالي صغير فوقه.
+  // الشهر الحالي مفتوح افتراضيًا، وما عداه مطوي، إلا لو المستخدم فتحه يدويًا بهذه الزيارة.
   function renderList(){
     var list = document.getElementById('entryList');
     var view = visibleEntries();
@@ -366,48 +366,27 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     var today = todayLabel();
     var now = new Date();
     var curMonthKey = monthKey(now);
-    var curWeekKey = weekKey(now);
 
-    // تجميع: شهر -> أسبوع -> حركات، بترتيب تنازلي (الأحدث فوق)
-    var months = {}; // key -> {label, weeks:{key:{label,entries:[]}}, order:[weekKeys], anyDate}
+    var months = {}; // key -> {label, sortDate, entries:[]}
     var monthOrder = [];
     view.forEach(function(e){
       var d = parseDateLabel(e.date) || now;
       var mk = monthKey(d), ml = monthLabel(d);
-      var wk = weekKey(d), wl = weekLabel(d);
-      if(!months[mk]){ months[mk] = { label: ml, sortDate: d, weeks: {}, weekOrder: [] }; monthOrder.push(mk); }
-      if(!months[mk].weeks[wk]){ months[mk].weeks[wk] = { label: wl, sortDate: d, entries: [] }; months[mk].weekOrder.push(wk); }
-      months[mk].weeks[wk].entries.push(e);
+      if(!months[mk]){ months[mk] = { label: ml, sortDate: d, entries: [] }; monthOrder.push(mk); }
+      months[mk].entries.push(e);
     });
     monthOrder.sort(function(a,b){ return months[b].sortDate - months[a].sortDate; });
 
     var html = monthOrder.map(function(mk){
       var mg = months[mk];
-      mg.weekOrder.sort(function(a,b){ return mg.weeks[b].sortDate - mg.weeks[a].sortDate; });
-      var monthEntries = [];
-      mg.weekOrder.forEach(function(wk){ monthEntries = monthEntries.concat(mg.weeks[wk].entries); });
       var monthOpen = Object.prototype.hasOwnProperty.call(expandedGroups, 'm:'+mk) ? expandedGroups['m:'+mk] : (mk === curMonthKey);
-
-      var weeksHtml = mg.weekOrder.map(function(wk){
-        var wg = mg.weeks[wk];
-        var weekOpenKey = 'w:'+wk;
-        var weekOpen = Object.prototype.hasOwnProperty.call(expandedGroups, weekOpenKey) ? expandedGroups[weekOpenKey] : (wk === curWeekKey);
-        var entriesHtml = wg.entries.map(function(e){ return entryRowHtml(e, today); }).join('');
-        return '<div class="weekGroup">'+
-          '<button type="button" class="groupHeader weekHeader" data-toggle="w:'+wk+'" data-open="'+(weekOpen?'1':'0')+'">'+
-            '<span class="glabel">'+wg.label+'</span>'+
-            '<span class="gright"><span class="gtotal">'+fmtNet(netTotal(wg.entries))+'</span><span class="chevron">›</span></span>'+
-          '</button>'+
-          '<div class="groupBody" '+(weekOpen?'':'hidden')+'>'+entriesHtml+'</div>'+
-        '</div>';
-      }).join('');
-
+      var entriesHtml = mg.entries.map(function(e){ return entryRowHtml(e, today); }).join('');
       return '<div class="monthGroup">'+
         '<button type="button" class="groupHeader" data-toggle="m:'+mk+'" data-open="'+(monthOpen?'1':'0')+'">'+
           '<span class="glabel">'+mg.label+'</span>'+
-          '<span class="gright"><span class="gtotal">'+fmtNet(netTotal(monthEntries))+'</span><span class="chevron">›</span></span>'+
+          '<span class="gright"><span class="gtotal">'+fmtNet(netTotal(mg.entries))+'</span><span class="chevron">›</span></span>'+
         '</button>'+
-        '<div class="groupBody" '+(monthOpen?'':'hidden')+'>'+weeksHtml+'</div>'+
+        '<div class="groupBody" '+(monthOpen?'':'hidden')+'>'+entriesHtml+'</div>'+
       '</div>';
     }).join('');
 
