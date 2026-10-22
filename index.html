@@ -60,6 +60,13 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
 
 .syncLabel{ text-align:center; font-size:.72rem; color:var(--fg-faint); }
 
+.totalsRow{ display:flex; justify-content:center; gap:18px; font-size:.78rem; color:var(--fg-muted); }
+.totalsRow b{ font-family:var(--font-display); font-weight:700; }
+.totalsRow .inTot b{ color:var(--good); }
+.totalsRow .outTot b{ color:var(--bad); }
+
+.versionFooter{ text-align:center; font-size:.68rem; color:var(--fg-faint); opacity:.6; margin-top:6px; }
+
 .addBtn{ font-family:var(--font-body); font-weight:700; font-size:1rem; color:#17191b; background:var(--accent); border:none; border-radius:16px; padding:16px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; }
 .addBtn:disabled{ opacity:.5; cursor:default; }
 
@@ -86,8 +93,23 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
 .printLink{ font-family:var(--font-body); font-weight:600; font-size:.72rem; color:var(--fg-faint); background:none; border:none; padding:4px 2px; cursor:pointer; display:flex; align-items:center; gap:4px; }
 .printLink:hover{ color:var(--fg-muted); }
 
-.entryList{ display:flex; flex-direction:column; gap:8px; }
-.entry{ background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:13px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.entryList{ display:flex; flex-direction:column; gap:14px; }
+
+.monthGroup{ display:flex; flex-direction:column; gap:8px; }
+.groupHeader{ width:100%; display:flex; align-items:center; justify-content:space-between; gap:8px; background:none; border:none; padding:6px 2px; cursor:pointer; font-family:var(--font-body); color:var(--fg); text-align:right; }
+.groupHeader .glabel{ font-weight:700; font-size:.95rem; }
+.groupHeader.weekHeader .glabel{ font-weight:600; font-size:.84rem; color:var(--fg-muted); }
+.groupHeader .gright{ display:flex; align-items:center; gap:8px; }
+.groupHeader .gtotal{ font-size:.72rem; color:var(--fg-faint); }
+.groupHeader .chevron{ font-size:.7rem; color:var(--fg-faint); transition:transform .15s; }
+.groupHeader[data-open="1"] .chevron{ transform:rotate(90deg); }
+.weekGroup{ display:flex; flex-direction:column; gap:7px; margin-inline-start:6px; }
+.groupBody{ display:flex; flex-direction:column; gap:8px; }
+.groupBody[hidden]{ display:none; }
+
+.entry{ background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:13px 14px; display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:default; }
+.entry.editable{ cursor:pointer; }
+.entry.editable:active{ background:var(--surface-2); }
 .entry.cancelled{ opacity:.55; }
 .entry .info{ display:flex; flex-direction:column; gap:2px; min-width:0; }
 .entry .info .desc{ font-weight:600; font-size:.92rem; }
@@ -136,6 +158,11 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     <span class="sub" id="balanceSub">جارٍ التحميل</span>
   </div>
 
+  <div class="totalsRow">
+    <span class="inTot">إجمالي وارد: <b id="totalInValue">—</b></span>
+    <span class="outTot">إجمالي ناقص: <b id="totalOutValue">—</b></span>
+  </div>
+
   <div class="syncLabel" id="syncLabel">—</div>
 
   <span id="statusMsg" class="statusMsg info" hidden></span>
@@ -173,6 +200,8 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
   <div class="entryList" id="entryList">
     <div class="emptyState">جارٍ التحميل</div>
   </div>
+
+  <div class="versionFooter" id="versionFooter"></div>
 </div>
 
 <script>
@@ -183,20 +212,25 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
   var APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxf84IaLsStuqhO3OJ-mGoXUKo9z4Xo1Zv1wfyfPVHRyufbecfGKC0yXq28PC4mOrZU/exec';
   // كلمة مرور بسيطة مشتركة مع السكربت، لمنع أي طرف عشوائي من الكتابة على الرابط لو تسرّب.
   var SYNC_SECRET = '0592943185';
+  var APP_VERSION = '1.4.0';
   // ====== نهاية الإعدادات ======
 
   var CACHE_KEY  = 'hamida_entries_v1';
   var QUEUE_KEY  = 'hamida_pending_queue_v1';
   var DELQ_KEY   = 'hamida_delete_queue_v1';
+  var EDITQ_KEY  = 'hamida_edit_queue_v1';
   var SYNC_KEY   = 'hamida_last_sync_v1';
   var PULL_INTERVAL_MS = 5 * 60 * 1000; // سحب دوري من الشيت كل 5 دقائق أثناء فتح الصفحة
 
   var allEntries   = []; // كل الحركات المحفوظة محليًا: [{id,type,amount,desc,date,cancelled,createdAt,syncedToSheet,sheetRow}]
   var pendingQueue = []; // معرفات حركات لم تُرسَل للشيت بعد: [id,...]
   var deleteQueue  = []; // أرقام صفوف بالشيت يجب تفريغها ولم يُؤكَّد ذلك بعد: [row,...]
+  var editQueue    = []; // أرقام صفوف بالشيت تحتاج تحديث بياناتها الحالية (من allEntries) ولم يُؤكَّد ذلك بعد: [row,...]
   var lastSyncAt   = null;
   var syncing      = false;
   var pulling      = false;
+  var editingId    = null; // id الحركة التي يفتح النموذج الآن لتعديلها (null يعني وضع "إضافة جديدة")
+  var expandedGroups = {}; // مفاتيح الشهر/الأسبوع المفتوحة حاليًا بالعرض: {key: true}
 
   function safeGet(key){
     try{ var v = localStorage.getItem(key); return v ? JSON.parse(v) : null; }catch(e){ return null; }
@@ -225,6 +259,28 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
   }
   function makeLocalId(){
     return 'h' + Date.now().toString(36) + Math.random().toString(36).slice(2,8);
+  }
+  var AR_MONTHS = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  function parseDateLabel(label){
+    var parts = String(label||'').split('/');
+    if(parts.length!==3) return null;
+    var d = new Date(+parts[2], +parts[1]-1, +parts[0]);
+    return isNaN(d.getTime()) ? null : d;
+  }
+  function monthKey(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1); }
+  function monthLabel(d){ return AR_MONTHS[d.getMonth()] + ' ' + d.getFullYear(); }
+  // الأسبوع من الجمعة للخميس: نرجع لأقرب جمعة سابقة (أو نفس اليوم لو هو جمعة)
+  function weekStart(d){
+    var day = d.getDay(); // 0=أحد...5=جمعة,6=سبت
+    var diff = (day - 5 + 7) % 7;
+    var ws = new Date(d.getFullYear(), d.getMonth(), d.getDate() - diff);
+    return ws;
+  }
+  function weekKey(d){ var ws = weekStart(d); return ws.getFullYear()+'-'+pad(ws.getMonth()+1)+'-'+pad(ws.getDate()); }
+  function weekLabel(d){
+    var ws = weekStart(d);
+    var we = new Date(ws.getFullYear(), ws.getMonth(), ws.getDate()+6);
+    return pad(ws.getDate())+'/'+pad(ws.getMonth()+1)+' - '+pad(we.getDate())+'/'+pad(we.getMonth()+1);
   }
   function escapeHtml(s){
     return String(s==null?'':s).replace(/[&<>"']/g, function(c){
@@ -262,6 +318,44 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     document.getElementById('balanceSub').textContent = bal>=0 ? 'رصيد له' : 'رصيد عليه';
   }
 
+  function renderTotals(){
+    var totalIn = 0, totalOut = 0;
+    allEntries.forEach(function(e){
+      if(e.cancelled) return;
+      if(e.type==='in') totalIn += e.amount; else totalOut += e.amount;
+    });
+    document.getElementById('totalInValue').textContent = fmt(totalIn) + ' ₪';
+    document.getElementById('totalOutValue').textContent = fmt(totalOut) + ' ₪';
+  }
+
+  function netTotal(list){
+    return list.reduce(function(sum, e){
+      if(e.cancelled) return sum;
+      return sum + (e.type==='in' ? e.amount : -e.amount);
+    }, 0);
+  }
+  function fmtNet(n){
+    return (n<0?'عليه ':'له ') + fmt(Math.abs(n)) + ' ₪';
+  }
+
+  function entryRowHtml(e, today){
+    var sign = e.type==='in' ? '+' : '−';
+    var tags = '';
+    if(e.cancelled) tags += '<span class="tag cancelledTag">ملغي</span>';
+    else if(APPS_SCRIPT_URL && !e.syncedToSheet) tags += '<span class="tag pendingTag">بانتظار المزامنة</span>';
+    var isToday = e.date === today;
+    return '<div class="entry '+(e.cancelled?'cancelled':'')+(isToday?' editable':'')+'" data-id="'+e.id+'" data-editable="'+(isToday?'1':'0')+'">'+
+      '<div class="info"><span class="desc">'+escapeHtml(e.desc)+'</span><span class="date">'+escapeHtml(e.date)+'</span></div>'+
+      '<div class="right">'+
+        tags+
+        '<span class="amt '+(e.type==='in'?'in':'out')+'">'+sign+fmt(e.amount)+' ₪</span>'+
+        (isToday ? '<button class="cancelBtn" data-action="delete" data-id="'+e.id+'">حذف</button>' : '')+
+      '</div>'+
+    '</div>';
+  }
+
+  // يبني العرض متداخلًا: شهر يحوي أسابيع (جمعة-خميس)، كل وحدة قابلة للطي/الفتح مع إجمالي صغير فوقها.
+  // الشهر والأسبوع الحاليين مفتوحين افتراضيًا، وما عداهما مطوي، إلا لو المستخدم فتحه يدويًا بهذه الزيارة.
   function renderList(){
     var list = document.getElementById('entryList');
     var view = visibleEntries();
@@ -270,25 +364,59 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
       return;
     }
     var today = todayLabel();
-    list.innerHTML = view.map(function(e){
-      var sign = e.type==='in' ? '+' : '−';
-      var tags = '';
-      if(e.cancelled) tags += '<span class="tag cancelledTag">ملغي</span>';
-      else if(APPS_SCRIPT_URL && !e.syncedToSheet) tags += '<span class="tag pendingTag">بانتظار المزامنة</span>';
-      var canDelete = e.date === today;
-      return '<div class="entry '+(e.cancelled?'cancelled':'')+'" data-id="'+e.id+'">'+
-        '<div class="info"><span class="desc">'+escapeHtml(e.desc)+'</span><span class="date">'+escapeHtml(e.date)+'</span></div>'+
-        '<div class="right">'+
-          tags+
-          '<span class="amt '+(e.type==='in'?'in':'out')+'">'+sign+fmt(e.amount)+' ₪</span>'+
-          (canDelete ? '<button class="cancelBtn" data-action="delete" data-id="'+e.id+'">حذف</button>' : '')+
-        '</div>'+
+    var now = new Date();
+    var curMonthKey = monthKey(now);
+    var curWeekKey = weekKey(now);
+
+    // تجميع: شهر -> أسبوع -> حركات، بترتيب تنازلي (الأحدث فوق)
+    var months = {}; // key -> {label, weeks:{key:{label,entries:[]}}, order:[weekKeys], anyDate}
+    var monthOrder = [];
+    view.forEach(function(e){
+      var d = parseDateLabel(e.date) || now;
+      var mk = monthKey(d), ml = monthLabel(d);
+      var wk = weekKey(d), wl = weekLabel(d);
+      if(!months[mk]){ months[mk] = { label: ml, sortDate: d, weeks: {}, weekOrder: [] }; monthOrder.push(mk); }
+      if(!months[mk].weeks[wk]){ months[mk].weeks[wk] = { label: wl, sortDate: d, entries: [] }; months[mk].weekOrder.push(wk); }
+      months[mk].weeks[wk].entries.push(e);
+    });
+    monthOrder.sort(function(a,b){ return months[b].sortDate - months[a].sortDate; });
+
+    var html = monthOrder.map(function(mk){
+      var mg = months[mk];
+      mg.weekOrder.sort(function(a,b){ return mg.weeks[b].sortDate - mg.weeks[a].sortDate; });
+      var monthEntries = [];
+      mg.weekOrder.forEach(function(wk){ monthEntries = monthEntries.concat(mg.weeks[wk].entries); });
+      var monthOpen = Object.prototype.hasOwnProperty.call(expandedGroups, 'm:'+mk) ? expandedGroups['m:'+mk] : (mk === curMonthKey);
+
+      var weeksHtml = mg.weekOrder.map(function(wk){
+        var wg = mg.weeks[wk];
+        var weekOpenKey = 'w:'+wk;
+        var weekOpen = Object.prototype.hasOwnProperty.call(expandedGroups, weekOpenKey) ? expandedGroups[weekOpenKey] : (wk === curWeekKey);
+        var entriesHtml = wg.entries.map(function(e){ return entryRowHtml(e, today); }).join('');
+        return '<div class="weekGroup">'+
+          '<button type="button" class="groupHeader weekHeader" data-toggle="w:'+wk+'" data-open="'+(weekOpen?'1':'0')+'">'+
+            '<span class="glabel">'+wg.label+'</span>'+
+            '<span class="gright"><span class="gtotal">'+fmtNet(netTotal(wg.entries))+'</span><span class="chevron">›</span></span>'+
+          '</button>'+
+          '<div class="groupBody" '+(weekOpen?'':'hidden')+'>'+entriesHtml+'</div>'+
+        '</div>';
+      }).join('');
+
+      return '<div class="monthGroup">'+
+        '<button type="button" class="groupHeader" data-toggle="m:'+mk+'" data-open="'+(monthOpen?'1':'0')+'">'+
+          '<span class="glabel">'+mg.label+'</span>'+
+          '<span class="gright"><span class="gtotal">'+fmtNet(netTotal(monthEntries))+'</span><span class="chevron">›</span></span>'+
+        '</button>'+
+        '<div class="groupBody" '+(monthOpen?'':'hidden')+'>'+weeksHtml+'</div>'+
       '</div>';
     }).join('');
+
+    list.innerHTML = html;
   }
 
   function renderAll(){
     renderBalance();
+    renderTotals();
     renderList();
     renderSyncLabel();
   }
@@ -297,6 +425,7 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     safeSet(CACHE_KEY, allEntries);
     safeSet(QUEUE_KEY, pendingQueue);
     safeSet(DELQ_KEY, deleteQueue);
+    safeSet(EDITQ_KEY, editQueue);
   }
 
   // يرسل الحركات المعلّقة (غير الملغاة) إلى شيت جوجل عبر Apps Script، حركة بحركة،
@@ -331,6 +460,29 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
           persist();
         }catch(err){
           break; // فشل الإرسال (غالبًا بسبب الشبكة): نوقف المحاولة، تُستكمل بالمحاولة القادمة
+        }
+      }
+      // طابور التعديل: صفوف بالشيت تحتاج تحديث بياناتها الحالية (حركات اليوم المعدَّلة بعد ما كانت تزامنت)
+      while(APPS_SCRIPT_URL && navigator.onLine && editQueue.length){
+        var erow = editQueue[0];
+        var eentry = allEntries.find(function(x){ return x.sheetRow === erow; });
+        if(!eentry){ editQueue.shift(); persist(); continue; }
+        try{
+          var eres = await fetch(APPS_SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({
+              secret: SYNC_SECRET, action: 'update', row: erow,
+              type: eentry.type, amount: eentry.amount, desc: eentry.desc, date: eentry.date
+            })
+          });
+          if(!eres.ok) throw new Error('bad status');
+          var edata = await eres.json().catch(function(){ return {}; });
+          if(edata && edata.ok === false) throw new Error(edata.error || 'rejected');
+          editQueue.shift();
+          persist();
+        }catch(err){
+          break;
         }
       }
       // طابور الحذف: صفوف بالشيت يجب تفريغها (حركات اليوم المحذوفة من التطبيق بعد ما كانت تزامنت)
@@ -443,22 +595,49 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     allEntries.splice(idx, 1);
     var qIdx = pendingQueue.indexOf(id);
     if(qIdx !== -1) pendingQueue.splice(qIdx, 1);
-    if(e.sheetRow && deleteQueue.indexOf(e.sheetRow) === -1) deleteQueue.push(e.sheetRow);
+    if(e.sheetRow){
+      var eqIdx = editQueue.indexOf(e.sheetRow);
+      if(eqIdx !== -1) editQueue.splice(eqIdx, 1); // تعديل معلّق على نفس الحركة صار بلا فائدة بعد حذفها
+      if(deleteQueue.indexOf(e.sheetRow) === -1) deleteQueue.push(e.sheetRow);
+    }
     persist();
     renderAll();
     trySync();
   }
 
   function resetForm(){
+    editingId = null;
     document.getElementById('amtInput').value = '';
     document.getElementById('descInput').value = '';
     document.getElementById('dateInput').value = todayInputValue();
+    document.getElementById('saveBtn').textContent = 'حفظ';
     setType('out');
   }
   function setType(t){
     document.getElementById('typeInBtn').classList.toggle('active', t==='in');
     document.getElementById('typeOutBtn').classList.toggle('active', t==='out');
     document.getElementById('formCard').dataset.type = t;
+  }
+
+  // يفتح نفس نموذج الإضافة معبّى ببيانات حركة موجودة لتعديلها؛ مقتصر على حركات اليوم فقط
+  // (نفس قيد الحذف)، لأن الحركات الأقدم تُعدَّل من الشيت مباشرة فقط.
+  function editEntry(id){
+    var e = allEntries.find(function(x){ return x.id===id; });
+    if(!e) return;
+    if(e.date !== todayLabel()){
+      showStatus('ما بينتعدّل إلا حركات اليوم من هنا. أي حركة أقدم عدّلها مباشرة بالشيت.', 'error');
+      return;
+    }
+    editingId = id;
+    document.getElementById('amtInput').value = e.amount;
+    document.getElementById('descInput').value = e.desc;
+    var d = parseDateLabel(e.date) || new Date();
+    document.getElementById('dateInput').value = d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate());
+    setType(e.type);
+    document.getElementById('saveBtn').textContent = 'حفظ التعديل';
+    document.getElementById('formCard').hidden = false;
+    hideStatus();
+    document.getElementById('formCard').scrollIntoView({ behavior:'smooth', block:'center' });
   }
 
   function saveEntry(){
@@ -470,9 +649,30 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     if(!desc){ showStatus('يجب إدخال البيان، مثل: نقل أو سلفة.', 'error'); return; }
     if(!dateVal){ showStatus('يجب تحديد التاريخ.', 'error'); return; }
 
-    var id = makeLocalId();
+    var newDateLabel = inputDateToLabel(dateVal);
+
+    if(editingId){
+      var e = allEntries.find(function(x){ return x.id===editingId; });
+      var id = editingId;
+      if(e){
+        e.type = type; e.amount = amt; e.desc = desc; e.date = newDateLabel;
+        persist();
+        if(e.sheetRow){
+          if(editQueue.indexOf(e.sheetRow) === -1) editQueue.push(e.sheetRow);
+          persist();
+        }
+      }
+      document.getElementById('formCard').hidden = true;
+      resetForm();
+      hideStatus();
+      renderAll();
+      if(e && e.sheetRow) trySync();
+      return;
+    }
+
+    var newId = makeLocalId();
     allEntries.push({
-      id: id, type: type, amount: amt, desc: desc, date: inputDateToLabel(dateVal),
+      id: newId, type: type, amount: amt, desc: desc, date: newDateLabel,
       cancelled: false, createdAt: Date.now(), syncedToSheet: false
     });
     persist();
@@ -482,12 +682,13 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     hideStatus();
     renderAll();
 
-    queueForSync(id);
+    queueForSync(newId);
   }
 
   document.getElementById('typeInBtn').addEventListener('click', function(){ setType('in'); });
   document.getElementById('typeOutBtn').addEventListener('click', function(){ setType('out'); });
   document.getElementById('openFormBtn').addEventListener('click', function(){
+    resetForm();
     document.getElementById('formCard').hidden = false;
     hideStatus();
   });
@@ -497,8 +698,20 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
   });
   document.getElementById('saveBtn').addEventListener('click', saveEntry);
   document.getElementById('entryList').addEventListener('click', function(e){
-    var btn = e.target.closest('[data-action="delete"]');
-    if(btn) deleteEntry(btn.dataset.id);
+    var delBtn = e.target.closest('[data-action="delete"]');
+    if(delBtn){ deleteEntry(delBtn.dataset.id); return; }
+
+    var toggle = e.target.closest('[data-toggle]');
+    if(toggle){
+      var key = toggle.dataset.toggle;
+      var currentlyOpen = toggle.dataset.open === '1';
+      expandedGroups[key] = !currentlyOpen;
+      renderList();
+      return;
+    }
+
+    var row = e.target.closest('.entry[data-editable="1"]');
+    if(row) editEntry(row.dataset.id);
   });
 
   // ينسّق رقمًا بنفس طريقة "General" في الشيت الأساسي: بدون فواصل الآلاف،
@@ -617,9 +830,11 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     allEntries   = safeGet(CACHE_KEY) || [];
     pendingQueue = safeGet(QUEUE_KEY) || [];
     deleteQueue  = safeGet(DELQ_KEY) || [];
+    editQueue    = safeGet(EDITQ_KEY) || [];
     lastSyncAt   = safeGet(SYNC_KEY) || null;
     fixBadDates();
     renderAll();
+    document.getElementById('versionFooter').textContent = 'الإصدار ' + APP_VERSION;
 
     if(APPS_SCRIPT_URL){
       trySync().then(pullFromSheet);
