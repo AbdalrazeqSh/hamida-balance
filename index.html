@@ -369,6 +369,7 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
       });
 
       if(changed){
+        fixBadDates();
         persist();
         renderAll();
       }
@@ -541,6 +542,23 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     if(document.visibilityState === 'visible') trySync().then(pullFromSheet);
   });
 
+  // يصلّح تلقائيًا أي تاريخ محفوظ محليًا بصيغة غلط (مثلًا من نسخة سابقة فيها خلل)،
+  // بتحويله لصيغة "يوم/شهر/سنة" الموحّدة. يعمل مرة عند كل فتح، بدون أي تدخل يدوي.
+  function fixBadDates(){
+    var changed = false;
+    var cleanRe = /^\d{1,2}\/\d{1,2}\/\d{4}$/;
+    allEntries.forEach(function(e){
+      if(e.date && !cleanRe.test(e.date)){
+        var d = new Date(e.date);
+        if(!isNaN(d.getTime())){
+          e.date = pad(d.getDate())+'/'+pad(d.getMonth()+1)+'/'+d.getFullYear();
+          changed = true;
+        }
+      }
+    });
+    if(changed) persist();
+  }
+
   function init(){
     setType('out');
     document.getElementById('dateInput').value = todayInputValue();
@@ -548,6 +566,7 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     allEntries   = safeGet(CACHE_KEY) || [];
     pendingQueue = safeGet(QUEUE_KEY) || [];
     lastSyncAt   = safeGet(SYNC_KEY) || null;
+    fixBadDates();
     renderAll();
 
     if(APPS_SCRIPT_URL){
