@@ -26,6 +26,24 @@ function doPost(e) {
       return respond(result);
     }
 
+    if (body.action === 'delete') {
+      var delRow = Number(body.row);
+      if (!delRow || delRow < 5) {
+        result.error = 'invalid_row';
+        return respond(result);
+      }
+      var ssDel = SpreadsheetApp.getActiveSpreadsheet();
+      var sheetDel = ssDel.getSheetByName(SHEET_NAME);
+      if (!sheetDel) {
+        result.error = 'sheet_not_found';
+        return respond(result);
+      }
+      // نفرّغ محتوى الصف بدل حذفه بالكامل، عشان ما تنزاح أرقام باقي الصفوف (وبالتالي باقي الحركات المتزامنة)
+      sheetDel.getRange(delRow, 2, 1, 4).clearContent();
+      result.ok = true;
+      return respond(result);
+    }
+
     var amount = Number(body.amount);
     var type = body.type === 'in' ? 'in' : 'out';
     var desc = String(body.desc || '').trim();
