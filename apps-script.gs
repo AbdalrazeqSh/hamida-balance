@@ -44,6 +44,36 @@ function doPost(e) {
       return respond(result);
     }
 
+    if (body.action === 'update') {
+      var updRow = Number(body.row);
+      if (!updRow || updRow < 5) {
+        result.error = 'invalid_row';
+        return respond(result);
+      }
+      var updAmount = Number(body.amount);
+      var updType = body.type === 'in' ? 'in' : 'out';
+      var updDesc = String(body.desc || '').trim();
+      var updDate = String(body.date || '').trim();
+      if (!updAmount || updAmount <= 0 || !updDesc || !updDate) {
+        result.error = 'invalid_data';
+        return respond(result);
+      }
+      var ssUpd = SpreadsheetApp.getActiveSpreadsheet();
+      var sheetUpd = ssUpd.getSheetByName(SHEET_NAME);
+      if (!sheetUpd) {
+        result.error = 'sheet_not_found';
+        return respond(result);
+      }
+      sheetUpd.getRange(updRow, 2, 1, 4).setValues([[
+        updType === 'in' ? updAmount : '',
+        updType === 'out' ? updAmount : '',
+        updDesc,
+        updDate
+      ]]);
+      result.ok = true;
+      return respond(result);
+    }
+
     var amount = Number(body.amount);
     var type = body.type === 'in' ? 'in' : 'out';
     var desc = String(body.desc || '').trim();
