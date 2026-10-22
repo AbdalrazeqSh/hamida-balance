@@ -86,14 +86,18 @@ function doGet(e) {
       var data = sheet.getRange(5, 2, lastRow - 4, 4).getValues(); // B:E من الصف 5
       for (var i = 0; i < data.length; i++) {
         var row = data[i];
-        var inAmt = row[0], outAmt = row[1], desc = row[2], date = row[3];
+        var inAmt = row[0], outAmt = row[1], desc = row[2], dateVal = row[3];
         if (!inAmt && !outAmt && !desc) continue; // صف فاضي
+        // بعض خلايا التاريخ بالشيت محفوظة كتاريخ حقيقي لا كنص، فتُنسَّق هنا بنفس صيغة التطبيق: يوم/شهر/سنة
+        var dateStr = (dateVal instanceof Date)
+          ? Utilities.formatDate(dateVal, ss.getSpreadsheetTimeZone(), 'dd/MM/yyyy')
+          : String(dateVal || '');
         entries.push({
           row: 5 + i,
           type: inAmt ? 'in' : 'out',
           amount: Number(inAmt || outAmt || 0),
           desc: String(desc || ''),
-          date: String(date || '')
+          date: dateStr
         });
       }
     }
