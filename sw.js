@@ -1,6 +1,6 @@
 // خدمة عامل حقيقية: هذه الصفحة مستضافة خارج بيئة Claude (على GitHub Pages)،
 // فتسجيل Service Worker هنا يعمل بشكل طبيعي ويتيح فتح التطبيق بدون اتصال من الصفر.
-var CACHE_NAME = 'hamida-shell-v6';
+var CACHE_NAME = 'hamida-shell-v7';
 var SHELL_FILES = [
   './',
   './index.html',

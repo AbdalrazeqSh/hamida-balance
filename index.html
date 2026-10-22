@@ -185,13 +185,15 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
   var SYNC_SECRET = '0592943185';
   // ====== نهاية الإعدادات ======
 
-  var CACHE_KEY = 'hamida_entries_v1';
-  var QUEUE_KEY = 'hamida_pending_queue_v1';
-  var SYNC_KEY  = 'hamida_last_sync_v1';
+  var CACHE_KEY  = 'hamida_entries_v1';
+  var QUEUE_KEY  = 'hamida_pending_queue_v1';
+  var DELQ_KEY   = 'hamida_delete_queue_v1';
+  var SYNC_KEY   = 'hamida_last_sync_v1';
   var PULL_INTERVAL_MS = 5 * 60 * 1000; // سحب دوري من الشيت كل 5 دقائق أثناء فتح الصفحة
 
   var allEntries   = []; // كل الحركات المحفوظة محليًا: [{id,type,amount,desc,date,cancelled,createdAt,syncedToSheet,sheetRow}]
   var pendingQueue = []; // معرفات حركات لم تُرسَل للشيت بعد: [id,...]
+  var deleteQueue  = []; // أرقام صفوف بالشيت يجب تفريغها ولم يُؤكَّد ذلك بعد: [row,...]
   var lastSyncAt   = null;
   var syncing      = false;
   var pulling      = false;
@@ -267,17 +269,19 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
       list.innerHTML = '<div class="emptyState">لا توجد حركات مسجّلة حتى الآن. اضغط زر «إضافة حركة جديدة» أعلى الصفحة.</div>';
       return;
     }
+    var today = todayLabel();
     list.innerHTML = view.map(function(e){
       var sign = e.type==='in' ? '+' : '−';
       var tags = '';
       if(e.cancelled) tags += '<span class="tag cancelledTag">ملغي</span>';
       else if(APPS_SCRIPT_URL && !e.syncedToSheet) tags += '<span class="tag pendingTag">بانتظار المزامنة</span>';
+      var canDelete = e.date === today;
       return '<div class="entry '+(e.cancelled?'cancelled':'')+'" data-id="'+e.id+'">'+
         '<div class="info"><span class="desc">'+escapeHtml(e.desc)+'</span><span class="date">'+escapeHtml(e.date)+'</span></div>'+
         '<div class="right">'+
           tags+
           '<span class="amt '+(e.type==='in'?'in':'out')+'">'+sign+fmt(e.amount)+' ₪</span>'+
-          '<button class="cancelBtn '+(e.cancelled?'undo':'')+'" data-action="toggle" data-id="'+e.id+'">'+(e.cancelled?'استرجاع':'إلغاء')+'</button>'+
+          (canDelete ? '<button class="cancelBtn" data-action="delete" data-id="'+e.id+'">حذف</button>' : '')+
         '</div>'+
       '</div>';
     }).join('');
@@ -292,6 +296,7 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
   function persist(){
     safeSet(CACHE_KEY, allEntries);
     safeSet(QUEUE_KEY, pendingQueue);
+    safeSet(DELQ_KEY, deleteQueue);
   }
 
   // يرسل الحركات المعلّقة (غير الملغاة) إلى شيت جوجل عبر Apps Script، حركة بحركة،
@@ -328,6 +333,21 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
           break; // فشل الإرسال (غالبًا بسبب الشبكة): نوقف المحاولة، تُستكمل بالمحاولة القادمة
         }
       }
+      // طابور الحذف: صفوف بالشيت يجب تفريغها (حركات اليوم المحذوفة من التطبيق بعد ما كانت تزامنت)
+      while(APPS_SCRIPT_URL && navigator.onLine && deleteQueue.length){
+        var row = deleteQueue[0];
+        try{
+          await fetch(APPS_SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify({ secret: SYNC_SECRET, action: 'delete', row: row })
+          });
+          deleteQueue.shift();
+          persist();
+        }catch(err){
+          break;
+        }
+      }
       lastSyncAt = Date.now();
       safeSet(SYNC_KEY, lastSyncAt);
       renderAll();
@@ -336,8 +356,9 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     }
   }
 
-  // يسحب كل حركات الشيت (المضافة من أي جهاز، بما فيه هذا الجهاز نفسه)، ويدمجها مع
-  // ما هو محفوظ محليًا، فيعرض كل الأجهزة نفس البيانات الموحّدة بعد كل سحب
+  // يسحب كل حركات الشيت (المضافة أو المعدَّلة أو المحذوفة من أي جهاز، بما فيه هذا الجهاز نفسه)
+  // ويطابقها بالكامل مع ما هو محفوظ محليًا: يحدّث الحركات المعدَّلة بالشيت، ويحذف محليًا أي حركة
+  // زالت من الشيت، ويضيف أي حركة جديدة — فتعرض كل الأجهزة دائمًا نفس البيانات الموحّدة من الشيت
   async function pullFromSheet(){
     if(pulling || !APPS_SCRIPT_URL || !navigator.onLine) return;
     pulling = true;
@@ -348,12 +369,31 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
       var data = await res.json().catch(function(){ return {}; });
       if(!data || data.ok === false || !Array.isArray(data.entries)) return;
 
-      var knownRows = {};
-      allEntries.forEach(function(e){ if(e.sheetRow) knownRows[e.sheetRow] = e; });
+      var remoteByRow = {};
+      data.entries.forEach(function(re){ remoteByRow[re.row] = re; });
 
       var changed = false;
-      data.entries.forEach(function(re){
-        if(knownRows[re.row]) return; // موجودة محليًا بالفعل (أُرسلت من هذا الجهاز أو سُحبت سابقًا)
+
+      // 1) الحركات اللي أصلها من الشيت (عندها sheetRow): نحدّثها لو تغيّرت، أو نحذفها محليًا لو زالت من الشيت
+      allEntries = allEntries.filter(function(e){
+        if(!e.sheetRow) return true; // حركة محلية بحتة (لسا ما انبعثت): نخليها بحالها
+        var re = remoteByRow[e.sheetRow];
+        delete remoteByRow[e.sheetRow]; // نعلّمها كمُعالَجة (سواء وُجدت أو لا)
+        if(!re) { changed = true; return false; } // زالت من الشيت: نحذفها محليًا أيضًا
+        if(e.type !== re.type || e.amount !== Number(re.amount) || e.desc !== re.desc || e.date !== re.date){
+          e.type = re.type === 'in' ? 'in' : 'out';
+          e.amount = Number(re.amount) || 0;
+          e.desc = re.desc || '';
+          e.date = re.date || '';
+          changed = true;
+        }
+        e.syncedToSheet = true;
+        return true;
+      });
+
+      // 2) أي حركات تبقّت بالشيت ولا نعرفها محليًا: حركات جديدة أُضيفت من جهاز تاني
+      Object.keys(remoteByRow).forEach(function(rowKey){
+        var re = remoteByRow[rowKey];
         allEntries.push({
           id: 'sheetRow_' + re.row,
           type: re.type === 'in' ? 'in' : 'out',
@@ -390,12 +430,23 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     trySync();
   }
 
-  function toggleCancel(id){
-    var e = allEntries.find(function(x){ return x.id===id; });
-    if(!e) return;
-    e.cancelled = !e.cancelled;
+  // حذف حقيقي (مو إلغاء) مقتصر على حركات اليوم فقط؛ أي حركة أقدم تُعدَّل من الشيت مباشرة فقط،
+  // والتطبيق بيعكس هذا التعديل تلقائيًا بالمزامنة القادمة (عبر pullFromSheet بالأعلى)
+  function deleteEntry(id){
+    var idx = allEntries.findIndex(function(e){ return e.id===id; });
+    if(idx===-1) return;
+    var e = allEntries[idx];
+    if(e.date !== todayLabel()){
+      showStatus('ما بينحذف إلا حركات اليوم من هنا. أي حركة أقدم عدّلها مباشرة بالشيت، والتطبيق بيحدّث نفسه تلقائيًا.', 'error');
+      return;
+    }
+    allEntries.splice(idx, 1);
+    var qIdx = pendingQueue.indexOf(id);
+    if(qIdx !== -1) pendingQueue.splice(qIdx, 1);
+    if(e.sheetRow && deleteQueue.indexOf(e.sheetRow) === -1) deleteQueue.push(e.sheetRow);
     persist();
     renderAll();
+    trySync();
   }
 
   function resetForm(){
@@ -446,8 +497,8 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
   });
   document.getElementById('saveBtn').addEventListener('click', saveEntry);
   document.getElementById('entryList').addEventListener('click', function(e){
-    var btn = e.target.closest('[data-action="toggle"]');
-    if(btn) toggleCancel(btn.dataset.id);
+    var btn = e.target.closest('[data-action="delete"]');
+    if(btn) deleteEntry(btn.dataset.id);
   });
 
   // ينسّق رقمًا بنفس طريقة "General" في الشيت الأساسي: بدون فواصل الآلاف،
@@ -565,6 +616,7 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
 
     allEntries   = safeGet(CACHE_KEY) || [];
     pendingQueue = safeGet(QUEUE_KEY) || [];
+    deleteQueue  = safeGet(DELQ_KEY) || [];
     lastSyncAt   = safeGet(SYNC_KEY) || null;
     fixBadDates();
     renderAll();
