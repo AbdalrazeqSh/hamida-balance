@@ -229,6 +229,8 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
   var lastSyncAt   = null;
   var syncing      = false;
   var pulling      = false;
+  var syncRunning  = false; // قفل موحّد يمنع تداخل الإرسال والسحب ببعض (كان سبب ظهور حركات مكررة)
+  var syncRerun    = false;
   var editingId    = null; // id الحركة التي يفتح النموذج الآن لتعديلها (null يعني وضع "إضافة جديدة")
   var expandedGroups = {}; // مفاتيح الشهر/الأسبوع المفتوحة حاليًا بالعرض: {key: true}
 
@@ -522,13 +524,28 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
         return true;
       });
 
-      // 2) أي حركات تبقّت بالشيت ولا نعرفها محليًا: حركات جديدة أُضيفت من جهاز تاني
+      // 2) أي حركات تبقّت بالشيت ولا نعرفها محليًا بعد: حركات جديدة أُضيفت من جهاز تاني،
+      // أو (احتياطًا) حركة من هذا الجهاز نفسه لسا ما انحطّ لها sheetRow محليًا (تضارب توقيت
+      // بين إرسالها وسحبها بنفس اللحظة) — نتحقق أولًا من تطابق المحتوى قبل ما نضيف نسخة جديدة
       Object.keys(remoteByRow).forEach(function(rowKey){
         var re = remoteByRow[rowKey];
+        var reType = re.type === 'in' ? 'in' : 'out';
+        var reAmount = Number(re.amount) || 0;
+        var match = allEntries.find(function(e){
+          return !e.sheetRow && e.type === reType && e.amount === reAmount && e.desc === (re.desc||'') && e.date === (re.date||'');
+        });
+        if(match){
+          match.sheetRow = re.row;
+          match.syncedToSheet = true;
+          var mqIdx = pendingQueue.indexOf(match.id);
+          if(mqIdx !== -1) pendingQueue.splice(mqIdx, 1);
+          changed = true;
+          return;
+        }
         allEntries.push({
           id: 'sheetRow_' + re.row,
-          type: re.type === 'in' ? 'in' : 'out',
-          amount: Number(re.amount) || 0,
+          type: reType,
+          amount: reAmount,
           desc: re.desc || '',
           date: re.date || '',
           cancelled: false,
@@ -554,11 +571,28 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     }
   }
 
+  // قفل موحّد حول عمليتي الإرسال والسحب معًا، بترتيب ثابت (إرسال ثم سحب) وبدون تداخل بينهما؛
+  // أي طلب مزامنة يصل أثناء تنفيذ طلب سابق يُسجَّل ويُعاد تنفيذه تلقائيًا بعد ما يخلص الحالي،
+  // بدل ما يشتغل بالتوازي معه (وهذا بالضبط ما كان يسبب ظهور حركات مكررة سابقًا)
+  async function runSync(){
+    if(syncRunning){ syncRerun = true; return; }
+    syncRunning = true;
+    try{
+      do{
+        syncRerun = false;
+        await trySync();
+        await pullFromSheet();
+      } while(syncRerun);
+    } finally {
+      syncRunning = false;
+    }
+  }
+
   function queueForSync(id){
     if(!APPS_SCRIPT_URL) return;
     if(pendingQueue.indexOf(id) === -1) pendingQueue.push(id);
     persist();
-    trySync();
+    runSync();
   }
 
   // حذف حقيقي (مو إلغاء) مقتصر على حركات اليوم فقط؛ أي حركة أقدم تُعدَّل من الشيت مباشرة فقط،
@@ -581,7 +615,7 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     }
     persist();
     renderAll();
-    trySync();
+    runSync();
   }
 
   function resetForm(){
@@ -645,7 +679,7 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
       resetForm();
       hideStatus();
       renderAll();
-      if(e && e.sheetRow) trySync();
+      if(e && e.sheetRow) runSync();
       return;
     }
 
@@ -778,11 +812,11 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
 
   document.getElementById('printBtn').addEventListener('click', openPrintStatement);
 
-  window.addEventListener('online', function(){ trySync().then(pullFromSheet); });
+  window.addEventListener('online', runSync);
   // طبقة حماية إضافية: أي رجوع للتطبيق (فتح الجوال، تبديل تطبيقات) يحاول يزامن أيضًا،
   // تحسبًا لأي حالة ما يُطلق فيها حدث "online" بشكل موثوق على بعض الأجهزة
   document.addEventListener('visibilitychange', function(){
-    if(document.visibilityState === 'visible') trySync().then(pullFromSheet);
+    if(document.visibilityState === 'visible') runSync();
   });
 
   // يصلّح تلقائيًا أي تاريخ محفوظ محليًا بصيغة غلط (مثلًا من نسخة سابقة فيها خلل)،
@@ -816,8 +850,8 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     document.getElementById('versionFooter').textContent = 'الإصدار ' + APP_VERSION;
 
     if(APPS_SCRIPT_URL){
-      trySync().then(pullFromSheet);
-      setInterval(function(){ trySync().then(pullFromSheet); }, PULL_INTERVAL_MS);
+      runSync();
+      setInterval(runSync, PULL_INTERVAL_MS);
     }
   }
   init();
