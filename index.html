@@ -122,8 +122,9 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
 .entry .tag{ font-size:.68rem; font-weight:700; border-radius:999px; padding:2px 8px; }
 .entry .tag.cancelledTag{ background:var(--bad-soft); color:var(--bad); }
 .entry .tag.pendingTag{ background:var(--accent-soft); color:var(--accent); }
-.cancelBtn{ background:none; border:1px solid var(--border); color:var(--fg-muted); border-radius:9px; padding:6px 10px; font-size:.76rem; font-family:var(--font-body); cursor:pointer; white-space:nowrap; }
+.cancelBtn{ background:none; border:1px solid var(--border); color:var(--fg-muted); border-radius:9px; padding:6px 10px; font-size:.76rem; font-family:var(--font-body); cursor:pointer; white-space:nowrap; transition:background .15s,color .15s,border-color .15s; }
 .cancelBtn.undo{ color:var(--accent); border-color:var(--accent); }
+.cancelBtn.confirm{ background:var(--bad); color:#fff; border-color:var(--bad); font-weight:700; }
 
 .emptyState{ text-align:center; color:var(--fg-muted); font-size:.88rem; padding:30px 10px; background:var(--surface); border:1px dashed var(--border); border-radius:14px; }
 .statusMsg{ font-size:.82rem; border-radius:10px; padding:10px 14px; text-align:center; }
@@ -721,9 +722,28 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     resetForm();
   });
   document.getElementById('saveBtn').addEventListener('click', saveEntry);
+  // زر الحذف يحتاج لمستين: اللمسة الأولى تحوّله لتأكيد أحمر، واللمسة الثانية (خلال ثوانٍ قليلة)
+  // هي اللي تنفّذ الحذف فعليًا. هذا تعمّد، عشان الحذف الحقيقي للمصاري ما يصير بلمسة وحدة بالخطأ.
+  var deleteConfirmTimers = {};
+  function handleDeleteClick(delBtn){
+    var id = delBtn.dataset.id;
+    if(delBtn.classList.contains('confirm')){
+      clearTimeout(deleteConfirmTimers[id]);
+      delete deleteConfirmTimers[id];
+      deleteEntry(id);
+      return;
+    }
+    delBtn.classList.add('confirm');
+    delBtn.textContent = 'تأكيد؟';
+    deleteConfirmTimers[id] = setTimeout(function(){
+      delBtn.classList.remove('confirm');
+      delBtn.textContent = 'حذف';
+      delete deleteConfirmTimers[id];
+    }, 3000);
+  }
   document.getElementById('entryList').addEventListener('click', function(e){
     var delBtn = e.target.closest('[data-action="delete"]');
-    if(delBtn){ deleteEntry(delBtn.dataset.id); return; }
+    if(delBtn){ handleDeleteClick(delBtn); return; }
 
     var toggle = e.target.closest('[data-toggle]');
     if(toggle){
