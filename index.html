@@ -269,6 +269,17 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     var d = new Date(+parts[2], +parts[1]-1, +parts[0]);
     return isNaN(d.getTime()) ? null : d;
   }
+  // نافذة التعديل/الحذف: اليوم + يومين قبله (3 أيام إجمالًا). أي حركة أقدم تُعدَّل من الشيت مباشرة فقط.
+  var EDITABLE_WINDOW_DAYS = 3;
+  function isWithinEditableWindow(label){
+    var d = parseDateLabel(label);
+    if(!d) return false;
+    var now = new Date();
+    var startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var startOfEntry = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    var diffDays = Math.round((startOfToday - startOfEntry) / 86400000);
+    return diffDays >= 0 && diffDays <= (EDITABLE_WINDOW_DAYS - 1);
+  }
   function monthKey(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1); }
   function monthLabel(d){ return AR_MONTHS[d.getMonth()] + ' ' + d.getFullYear(); }
   // الأسبوع من الجمعة للخميس: نرجع لأقرب جمعة سابقة (أو نفس اليوم لو هو جمعة)
@@ -345,13 +356,13 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     var tags = '';
     if(e.cancelled) tags += '<span class="tag cancelledTag">ملغي</span>';
     else if(APPS_SCRIPT_URL && !e.syncedToSheet) tags += '<span class="tag pendingTag">بانتظار المزامنة</span>';
-    var isToday = e.date === today;
-    return '<div class="entry '+(e.cancelled?'cancelled':'')+(isToday?' editable':'')+'" data-id="'+e.id+'" data-editable="'+(isToday?'1':'0')+'">'+
+    var isEditable = isWithinEditableWindow(e.date);
+    return '<div class="entry '+(e.cancelled?'cancelled':'')+(isEditable?' editable':'')+'" data-id="'+e.id+'" data-editable="'+(isEditable?'1':'0')+'">'+
       '<div class="info"><span class="desc">'+escapeHtml(e.desc)+'</span><span class="date">'+escapeHtml(e.date)+'</span></div>'+
       '<div class="right">'+
         tags+
+        (isEditable ? '<button class="cancelBtn" data-action="delete" data-id="'+e.id+'">حذف</button>' : '')+
         '<span class="amt '+(e.type==='in'?'in':'out')+'">'+sign+fmt(e.amount)+' ₪</span>'+
-        (isToday ? '<button class="cancelBtn" data-action="delete" data-id="'+e.id+'">حذف</button>' : '')+
       '</div>'+
     '</div>';
   }
@@ -595,14 +606,14 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     runSync();
   }
 
-  // حذف حقيقي (مو إلغاء) مقتصر على حركات اليوم فقط؛ أي حركة أقدم تُعدَّل من الشيت مباشرة فقط،
+  // حذف حقيقي (مو إلغاء) مقتصر على حركات آخر 3 أيام فقط؛ أي حركة أقدم تُعدَّل من الشيت مباشرة فقط،
   // والتطبيق بيعكس هذا التعديل تلقائيًا بالمزامنة القادمة (عبر pullFromSheet بالأعلى)
   function deleteEntry(id){
     var idx = allEntries.findIndex(function(e){ return e.id===id; });
     if(idx===-1) return;
     var e = allEntries[idx];
-    if(e.date !== todayLabel()){
-      showStatus('ما بينحذف إلا حركات اليوم من هنا. أي حركة أقدم عدّلها مباشرة بالشيت، والتطبيق بيحدّث نفسه تلقائيًا.', 'error');
+    if(!isWithinEditableWindow(e.date)){
+      showStatus('ما بينحذف إلا حركات آخر 3 أيام من هنا. أي حركة أقدم عدّلها مباشرة بالشيت، والتطبيق بيحدّث نفسه تلقائيًا.', 'error');
       return;
     }
     allEntries.splice(idx, 1);
@@ -632,13 +643,13 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     document.getElementById('formCard').dataset.type = t;
   }
 
-  // يفتح نفس نموذج الإضافة معبّى ببيانات حركة موجودة لتعديلها؛ مقتصر على حركات اليوم فقط
+  // يفتح نفس نموذج الإضافة معبّى ببيانات حركة موجودة لتعديلها؛ مقتصر على حركات آخر 3 أيام فقط
   // (نفس قيد الحذف)، لأن الحركات الأقدم تُعدَّل من الشيت مباشرة فقط.
   function editEntry(id){
     var e = allEntries.find(function(x){ return x.id===id; });
     if(!e) return;
-    if(e.date !== todayLabel()){
-      showStatus('ما بينتعدّل إلا حركات اليوم من هنا. أي حركة أقدم عدّلها مباشرة بالشيت.', 'error');
+    if(!isWithinEditableWindow(e.date)){
+      showStatus('ما بينتعدّل إلا حركات آخر 3 أيام من هنا. أي حركة أقدم عدّلها مباشرة بالشيت.', 'error');
       return;
     }
     editingId = id;
