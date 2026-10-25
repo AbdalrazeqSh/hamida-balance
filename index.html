@@ -317,8 +317,17 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     document.getElementById('syncLabel').textContent = formatSyncLabel() + (pendingQueue.length ? ' · بانتظار المزامنة: ' + pendingQueue.length : '');
   }
 
+  // مفتاح ترتيب موحّد وصحيح زمنيًا: الحركات اللي اتزامنت مع الشيت (عندها sheetRow) نرتّبها
+  // برقم صفها بالشيت، لأنه يعكس ترتيب وصولها الحقيقي للخادم بدقة (بغض النظر عن أي جهاز أضافها)؛
+  // أما الحركة المحلية المعلّقة (لسا ما انبعثت) فترتيبها بوقت إضافتها محليًا (createdAt)، وتُحسب
+  // دائمًا كـ"الأحدث" (لأنها فعلًا لسا ما انضافت للشيت). قبل هذا الإصلاح كان النوعان يُقارنان
+  // ببعض مباشرة بمقاييس مختلفة (رقم صف صغير مقابل طابع زمني ضخم)، وهذا كان يسبب ترتيبًا غلط
+  // بين حركة أضيفت من هذا الجهاز وحركة أضيفت من جهاز حميدا بنفس اليوم.
+  function sortKeyOf(e){
+    return e.sheetRow ? e.sheetRow : (1e15 + (e.createdAt || 0));
+  }
   function visibleEntries(){
-    return allEntries.slice().sort(function(a,b){ return (b.createdAt||0) - (a.createdAt||0); });
+    return allEntries.slice().sort(function(a,b){ return sortKeyOf(a) - sortKeyOf(b); });
   }
 
   function renderBalance(){
@@ -770,7 +779,7 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
   // (المطبخ / الرصيد / إجمالي وارد وناقص / ترويسة الأعمدة)، ونفس خطوط الجدول وتنسيق الأرقام،
   // بترتيب أعمدة الشيت نفسه (وارد / ناقص / البيان / التاريخ)، في نافذة/تبويب مستقل يُطبَع منه
   function openPrintStatement(){
-    var rows = visibleEntries().slice().sort(function(a,b){ return (a.createdAt||0) - (b.createdAt||0); });
+    var rows = visibleEntries(); // already sorted chronologically (sortKeyOf), oldest إلى أحدث
     var totalIn = 0, totalOut = 0;
     var bodyRows = rows.map(function(e){
       var isIn = e.type === 'in';
