@@ -327,7 +327,8 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     return e.sheetRow ? e.sheetRow : (1e15 + (e.createdAt || 0));
   }
   function visibleEntries(){
-    return allEntries.slice().sort(function(a,b){ return sortKeyOf(a) - sortKeyOf(b); });
+    // الأحدث أولًا (فوق): حركات اليوم تظهر بالبداية، مطابقة لترتيب الأيام (الأحدث فوق)
+    return allEntries.slice().sort(function(a,b){ return sortKeyOf(b) - sortKeyOf(a); });
   }
 
   function renderBalance(){
@@ -779,7 +780,9 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
   // (المطبخ / الرصيد / إجمالي وارد وناقص / ترويسة الأعمدة)، ونفس خطوط الجدول وتنسيق الأرقام،
   // بترتيب أعمدة الشيت نفسه (وارد / ناقص / البيان / التاريخ)، في نافذة/تبويب مستقل يُطبَع منه
   function openPrintStatement(){
-    var rows = visibleEntries(); // already sorted chronologically (sortKeyOf), oldest إلى أحدث
+    // كشف الحساب المطبوع يُقرأ تصاعديًا من الأقدم للأحدث (مطابقة لترتيب صفوف الشيت الأصلي)،
+    // عكس عرض التطبيق الرئيسي اللي يعرض الأحدث فوق
+    var rows = visibleEntries().slice().sort(function(a,b){ return sortKeyOf(a) - sortKeyOf(b); });
     var totalIn = 0, totalOut = 0;
     var bodyRows = rows.map(function(e){
       var isIn = e.type === 'in';
