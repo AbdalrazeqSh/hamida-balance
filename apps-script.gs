@@ -16,6 +16,20 @@
 var SHEET_NAME = 'رصيد مع حميدا';
 var SECRET = 'GHAYYER_HETHI'; // غيّرها لكلمة مرور من اختيارك، واستخدم نفسها في التطبيق
 
+// يحوّل نص التاريخ القادم من التطبيق (يوم/شهر/سنة) إلى تاريخ حقيقي صريح (سنة، شهر، يوم)،
+// بدل ما نكتب النص زي ما هو ونخلي جوجل شيت يحاول يخمّن صيغته بنفسه. التخمين هذا هو سبب
+// مشكلة ظهرت فعليًا: لما يكون اليوم والشهر كلاهما ≤12 (مثلاً 01/11/2026 ليوم 1 نوفمبر)،
+// جوجل شيت بيفسّرها أحيانًا كـ"شهر/يوم" (حسب لغة/منطقة الشيت) ويحوّلها لتاريخ مختلف تمامًا
+// (11 يناير بدل 1 نوفمبر). ببناء كائن Date صريح هنا، ما بضل أي مجال للتخمين أو الالتباس.
+function parseAppDateString(str){
+  var parts = String(str||'').trim().split('/');
+  if(parts.length !== 3) return null;
+  var day = Number(parts[0]), month = Number(parts[1]), year = Number(parts[2]);
+  if(!day || !month || !year) return null;
+  var d = new Date(year, month - 1, day);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function doPost(e) {
   var result = { ok: false };
   try {
@@ -64,12 +78,14 @@ function doPost(e) {
         result.error = 'sheet_not_found';
         return respond(result);
       }
+      var updDateObj = parseAppDateString(updDate);
       sheetUpd.getRange(updRow, 2, 1, 4).setValues([[
         updType === 'in' ? updAmount : '',
         updType === 'out' ? updAmount : '',
         updDesc,
-        updDate
+        updDateObj || updDate
       ]]);
+      sheetUpd.getRange(updRow, 5).setNumberFormat('dd/mm/yyyy'); // العمود E (التاريخ)
       result.ok = true;
       return respond(result);
     }
@@ -94,12 +110,14 @@ function doPost(e) {
     // ترتيب الأعمدة في الشيت: B=وارد, C=ناقص, D=البيان, E=التاريخ
     var lastRow = sheet.getLastRow();
     var newRow = lastRow + 1;
+    var dateObj = parseAppDateString(date);
     sheet.getRange(newRow, 2, 1, 4).setValues([[
       type === 'in' ? amount : '',
       type === 'out' ? amount : '',
       desc,
-      date
+      dateObj || date
     ]]);
+    sheet.getRange(newRow, 5).setNumberFormat('dd/mm/yyyy'); // العمود E (التاريخ): يمنع أي تفسير ملتبس لاحقًا
 
     result.ok = true;
     result.row = newRow;
