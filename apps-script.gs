@@ -107,6 +107,47 @@ function doPost(e) {
       return respond(result);
     }
 
+    // منع التكرار (idempotency): كل حركة تحمل معرّفًا فريدًا uid من التطبيق. إن وصل المعرّف نفسه مرة ثانية
+    // (إعادة محاولة بعد ضياع الرد، أو ضغطتان، أو جهازان) لا نكتب صفًا جديدًا بل نرجع الصف الأول.
+    // القفل يمنع طلبين متزامنين من تخطّي الفحص معًا.
+    var lock = LockService.getScriptLock();
+    lock.waitLock(20000);
+    try {
+      var props = PropertiesService.getScriptProperties();
+      var uid = body.uid ? 'u:' + String(body.uid).slice(0, 80) : '';
+      if (uid) {
+        var seen = props.getProperty(uid);
+        if (seen) {
+          result.ok = true;
+          result.row = Number(seen);
+          result.dup = true;
+          return respond(result);
+        }
+      }
+      // حماية للعملاء القدامى بلا uid: الحركة نفسها (نوع+مبلغ+بيان+تاريخ) خلال دقيقتين = إعادة إرسال لا حركة جديدة
+      var sig = 's:' + [type, amount, desc, date].join('|').slice(0, 200);
+      var prev = props.getProperty(sig);
+      if (prev) {
+        var pp = prev.split('@'); // الصف@وقت الكتابة
+        if (Date.now() - Number(pp[1]) < 120000) {
+          result.ok = true; result.row = Number(pp[0]); result.dup = true;
+          return respond(result);
+        }
+      }
+      var out = appendEntry_(sheet, type, amount, desc, date, uid, props, result);
+      if (result.row) props.setProperty(sig, result.row + '@' + Date.now());
+      return out;
+    } finally {
+      lock.releaseLock();
+    }
+  } catch (err) {
+    result.error = String(err);
+    return respond(result);
+  }
+}
+
+function appendEntry_(sheet, type, amount, desc, date, uid, props, result) {
+  {
     // ترتيب الأعمدة في الشيت: B=وارد, C=ناقص, D=البيان, E=التاريخ
     var lastRow = sheet.getLastRow();
     var newRow = lastRow + 1;
@@ -119,11 +160,9 @@ function doPost(e) {
     ]]);
     sheet.getRange(newRow, 5).setNumberFormat('dd/mm/yyyy'); // العمود E (التاريخ): يمنع أي تفسير ملتبس لاحقًا
 
+    if (uid) props.setProperty(uid, String(newRow));
     result.ok = true;
     result.row = newRow;
-    return respond(result);
-  } catch (err) {
-    result.error = String(err);
     return respond(result);
   }
 }

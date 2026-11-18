@@ -448,6 +448,7 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
             headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // يتجنّب preflight CORS مع Apps Script
             body: JSON.stringify({
               secret: SYNC_SECRET,
+              uid: entry.id, // معرّف فريد: الخادم لا يكتب الحركة مرتين لو أُعيد إرسالها
               type: entry.type,
               amount: entry.amount,
               desc: entry.desc,
@@ -458,7 +459,11 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
           var data = await res.json().catch(function(){ return {}; });
           if(data && data.ok === false) throw new Error(data.error || 'rejected');
           entry.syncedToSheet = true;
-          if(data && data.row) entry.sheetRow = data.row; // يمنع ظهورها كتكرار لاحقًا عند السحب من الشيت
+          if(data && data.row){
+            entry.sheetRow = data.row; // يمنع ظهورها كتكرار لاحقًا عند السحب من الشيت
+            // لو سحبٌ سابق أضاف الصف نفسه كحركة منفصلة (ضاع الرد قبلها)، نزيل هذه النسخة الثانية
+            allEntries = allEntries.filter(function(x){ return x === entry || x.id !== 'sheetRow_' + data.row; });
+          }
           pendingQueue.shift();
           persist();
         }catch(err){
@@ -675,7 +680,10 @@ body{ background:var(--bg); color:var(--fg); margin:0; font-family:var(--font-bo
     document.getElementById('formCard').scrollIntoView({ behavior:'smooth', block:'center' });
   }
 
+  var lastSaveAt = 0;
   function saveEntry(){
+    if(Date.now() - lastSaveAt < 1500) return; // ضغطة مزدوجة سريعة: تُهمل
+    lastSaveAt = Date.now();
     var amt = parseFloat(document.getElementById('amtInput').value);
     var desc = document.getElementById('descInput').value.trim();
     var type = document.getElementById('formCard').dataset.type || 'out';
